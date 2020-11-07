@@ -1,7 +1,3 @@
-//
-// Created by Shan on 2020-10-19.
-//
-
 #include <ctime>
 #include <omp.h>
 #include <vector>
@@ -17,8 +13,8 @@ const char CSV_SEPARATOR = ';';
 
 enum COLOR : int {
     UNINITIALIZED = -1,
-    RED = 1,
-    GREEN = 2
+    RED = 0,
+    GREEN = 1
 };
 
 class Graph {
@@ -34,13 +30,18 @@ public:
     /// \param input_csv_file path to csv file to load
     void load_graph_edges_from_csv(const std::string &input_csv_file);
 
+    /// Loads matrix from CSV file
     void load_graph_matrix_from_csv(const std::string &input_csv_file);
+
+    void load_graph_edges_from_stdin();
+
+    void load_graph_matrix_from_stdin();
 
     /// Checks whether graph is fully connected (in other words - is every node connected to every other node)
     bool is_fully_connected();
 
     /// Checks whether graph is bipartite
-    bool is_bipartite(int source_node);
+    bool is_bipartite();
 
 private:
     /// Maximum size of the matrix being considered
@@ -58,28 +59,27 @@ private:
     /// Adds edge to graph, right now without taking into account direction of the graph
     /// \param vertex_u First vertex
     /// \param vertex_v Second vertex
-    void add_edge(int vertex_u, int vertex_v);
-
-    /// Function for traversing whole graph by specified vertex 'u'
-    /// \param vertex_u vertex by which graph will be traversed
-    /// \param visited reference to boolean list which contains information about whether specified vertex has been visited or not
-    /// \returns by reference - visited vertexes
-    void traverse_graph(int vertex_u, bool *visited);
+    /// \param bidirectional is edge bidirectional
+    void add_edge(int vertex_u, int vertex_v, bool bidirectional);
 
     void store_highest_node_present(int vertex_u, int vertex_v);
 
     bool self_reference_in_matrix(int u) const;
 
-    static std::vector<int> get_csv_row(const std::string &line) ;
+    static std::vector<int> get_csv_row(const std::string &line);
+
+    bool color_it(std::vector<COLOR> &color_array, int position, COLOR color);
 };
 
 
-void Graph::add_edge(int vertex_u, int vertex_v) {
+void Graph::add_edge(int vertex_u, int vertex_v, bool bidirectional) {
     edges[edge_count][0] = vertex_u;
     edges[edge_count][1] = vertex_v;
     edge_count++;
     matrix[vertex_u][vertex_v] = 1;
-    matrix[vertex_v][vertex_u] = 1;
+    if (bidirectional) {
+        matrix[vertex_v][vertex_u] = 1;
+    }
     store_highest_node_present(vertex_u, vertex_v);
 }
 
@@ -103,7 +103,7 @@ void Graph::load_graph_edges_from_csv(const std::string &input_csv_file) {
     std::string line;
     while (std::getline(data, line)) {
         std::vector<int> row = get_csv_row(line);
-        add_edge(row[0], row[1]);
+        add_edge(row[0], row[1], false);
     }
 }
 
@@ -117,26 +117,13 @@ std::vector<int> Graph::get_csv_row(const std::string &line) {
     return row;
 }
 
-void Graph::traverse_graph(int vertex_u, bool *visited) {
-    visited[vertex_u] = true;
-    for (int vertex_v = 0; vertex_v < edge_count; vertex_v++) {
-        if (matrix[vertex_u][vertex_v]) {
-            if (!visited[vertex_v])
-                traverse_graph(vertex_v, visited);
-        }
-    }
-}
-
-
 bool Graph::is_fully_connected() {
-    bool *already_visited = new bool[edge_count];
-    for (int vertex_u = 0; vertex_u < edge_count; vertex_u++) {
-        for (int i = 0; i < edge_count; i++) {
-            already_visited[i] = false;
-        }
-        traverse_graph(vertex_u, already_visited);
-        for (int i = 0; i < edge_count; i++) {
-            if (!already_visited[i]) {
+    for (int vertex_u = 0; vertex_u < highest_node_present; vertex_u++) {
+        for (int vertex_v = 0; vertex_v < highest_node_present; vertex_v++) {
+            if (vertex_v == vertex_u) {
+                continue;
+            }
+            if (!(matrix[vertex_u][vertex_v] == 1 || matrix[vertex_v][vertex_u] == 1)) {
                 return false;
             }
         }
@@ -144,40 +131,54 @@ bool Graph::is_fully_connected() {
     return true;
 }
 
-bool Graph::is_bipartite(int source_node) {
-    COLOR color_array[highest_node_present];
-    for (int i=0; i<highest_node_present; i++) {
-        color_array[i] = UNINITIALIZED;
+bool Graph::color_it(std::vector<COLOR> &color_array, int position, COLOR color) {
+    if (color_array[position] != UNINITIALIZED && color_array[position] != color) {
+        return false;
     }
-    color_array[source_node] = RED;
-    std::queue<int> color_queue;
-    color_queue.push(source_node);
-    while (!color_queue.empty()) {
-        int current_source = color_queue.front();
-        color_queue.pop();
-        if (self_reference_in_matrix(current_source)) {
+    color_array[position] = color;
+    COLOR neighbours_color = color == RED ? GREEN : RED;
+    bool answer = true;
+    for (int neighbour_node = 0; neighbour_node <= highest_node_present; neighbour_node++) {
+        if (matrix[position][neighbour_node]) {
+            if (color_array[neighbour_node] == UNINITIALIZED) {
+                answer &= color_it(color_array, neighbour_node, neighbours_color);
+            }
+
+            if (color_array[neighbour_node] != UNINITIALIZED
+                && color_array[neighbour_node] != neighbours_color) {
+                return false;
+            }
+        }
+        if (!answer) {
             return false;
         }
-        for (int current_target = 0; current_target < highest_node_present; current_target++) {
-            printf("Matrix[current_source][current_target] = %d,"
-                   "color_array[current_target] = %d,"
-                   "color_array[current_source] = %d\n",
-                   matrix[current_source][current_target],
-                   color_array[current_target],
-                   color_array[current_source]);
-            if (matrix[current_source][current_target] && color_array[current_target] != UNINITIALIZED) {
-                color_array[current_target] = color_array[current_source] == RED ? GREEN : RED;
-                color_queue.push(current_target);
-            }
-            else if (matrix[current_source][current_target] && color_array[current_target] == color_array[current_source]) {
-                return false;
-            }
+    }
+
+    return true;
+}
+
+
+bool Graph::is_bipartite() {
+    std::vector<COLOR> color_array(highest_node_present+1);
+    // No way for graph to be bipartite when it has self-reference
+    for (int current_node_index = 0; current_node_index <= highest_node_present; current_node_index++) {
+        if (self_reference_in_matrix(current_node_index)) {
+            return false;
         }
     }
-    return true;
+    // Initialize color array
+    for (int i = 0; i < highest_node_present; i++) {
+        color_array[i] = UNINITIALIZED;
+    }
+    bool answer = color_it(color_array, 0, GREEN);
+    for (COLOR col : color_array) {
+        printf("Color:%d\n", col);
+    }
+    return answer;
 }
 
 bool Graph::self_reference_in_matrix(int u) const { return matrix[u][u] == 1; }
+
 
 void Graph::load_graph_matrix_from_csv(const std::string &input_csv_file) {
     std::ifstream data(input_csv_file);
@@ -185,23 +186,66 @@ void Graph::load_graph_matrix_from_csv(const std::string &input_csv_file) {
     int current_row = 0;
     while (std::getline(data, line)) {
         std::vector<int> row = get_csv_row(line);
-        for (int current_column=0; current_column<row.size(); current_column++) {
+        for (int current_column = 0; current_column < row.size(); current_column++) {
             matrix[current_row][current_column] = row[current_column];
         }
         current_row++;
     }
+}
 
+void Graph::load_graph_matrix_from_stdin() {
+    std::string line;
+    std::vector<std::vector<int>> input_data;
+    int num_of_vectors;
+    std::getline(std::cin, line);
+    num_of_vectors = std::stoi(line);
+    for (int i = 0; i < num_of_vectors; i++) {
+        std::vector<int> row;
+        std::getline(std::cin, line);
+        std::stringstream basic_stringstream(line);
+        std::string provided_number;
+        int j = 0;
+        while (std::getline(basic_stringstream, provided_number, ' ')) {
+            int number = std::stoi(provided_number);
+            matrix[i][j] = number;
+            if (number == 1) {
+                add_edge(i, j, false);
+            }
+            j++;
+        }
+    }
+}
+
+void Graph::load_graph_edges_from_stdin() {
+    std::string line;
+
+    std::vector<std::vector<int>> input_data;
+    int num_of_lines;
+    std::getline(std::cin, line);
+    num_of_lines = std::stoi(line);
+    for (int i = 0; i < num_of_lines; i++) {
+        std::vector<int> row;
+        std::getline(std::cin, line);
+        std::stringstream basic_stringstream(line);
+        std::string provided_number;
+        while (std::getline(basic_stringstream, provided_number, ' ')) {
+            row.push_back(std::stoi(provided_number));
+        }
+        add_edge(row[0], row[1], false);
+    }
 }
 
 
 Graph::Graph() = default;
 
 
-int main() {
+int main(int argc, char **argv) {
     Graph graph = Graph();
-    graph.load_graph_edges_from_csv(R"(W:\ZAiSD\Zad1\out.csv)");
+//    graph.load_graph_edges_from_csv(R"(W:\ZAiSD\Zad1\out.csv)");
+//    graph.load_graph_matrix_from_stdin();
+    graph.load_graph_edges_from_stdin();
     graph.show_graph_matrix();
     std::printf("Is fully connected?: %s\n", graph.is_fully_connected() ? "true" : "false");
-    std::printf("Is bipartite?: %s", graph.is_bipartite(0) ? "true" : "false");
+    std::printf("Is bipartite?: %s", graph.is_bipartite() ? "true" : "false");
     return 0;
 }
